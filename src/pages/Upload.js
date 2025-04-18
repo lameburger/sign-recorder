@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import styled from 'styled-components';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { storage, db, auth } from '../services/firebase';
-import VideoRecorder from '../components/VideoRecorder';
+import React, { useState } from "react";
+import styled from "styled-components";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { storage, db, auth } from "../services/firebase";
+import { uploadVideoToGlacier } from "../services/aws"; // Now using Firebase Storage internally
+import VideoRecorder from "../components/VideoRecorder";
 
 const UploadContainer = styled.div`
   max-width: 800px;
@@ -61,7 +62,7 @@ const Button = styled.button`
   font-weight: bold;
   margin-top: 10px;
   cursor: pointer;
-  
+
   &:disabled {
     opacity: 0.5;
     cursor: not-allowed;
@@ -97,12 +98,12 @@ const GuidelinesTitle = styled.h3`
 `;
 
 const Upload = () => {
-  const [signLanguage, setSignLanguage] = useState('');
-  const [word, setWord] = useState('');
+  const [signLanguage, setSignLanguage] = useState("");
+  const [word, setWord] = useState("");
   const [videoBlob, setVideoBlob] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   const handleVideoRecorded = (blob) => {
     setVideoBlob(blob);
@@ -110,79 +111,117 @@ const Upload = () => {
 
   const validateForm = () => {
     if (!signLanguage) {
-      setError('Please select a sign language');
+      setError("Please select a sign language");
       return false;
     }
-    
+
     if (!word) {
-      setError('Please enter the word for this sign');
+      setError("Please enter the word for this sign");
       return false;
     }
-    
+
     // Check if word contains only letters
     if (!/^[a-zA-Z]+$/.test(word)) {
-      setError('Word should only contain letters (no numbers or special characters)');
+      setError(
+        "Word should only contain letters (no numbers or special characters)"
+      );
       return false;
     }
-    
+
     if (!videoBlob) {
-      setError('Please record a video');
+      setError("Please record a video");
       return false;
     }
-    
-    setError('');
+
+    setError("");
     return true;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (!validateForm()) {
       return;
     }
-    
+
     setIsUploading(true);
-    
+    setError("");
+
     try {
       const user = auth.currentUser;
-      
+
       if (!user) {
-        setError('You must be logged in to upload videos');
+        setError("You must be logged in to upload videos");
         setIsUploading(false);
         return;
       }
-      
+
       // Create a unique filename
       const timestamp = new Date().getTime();
       const filename = `${user.uid}_${word}_${timestamp}.webm`;
-      
-      // Upload video to Firebase Storage
-      const storageRef = ref(storage, `signs/${signLanguage}/${filename}`);
-      await uploadBytes(storageRef, videoBlob);
-      
-      // Get the download URL
-      const downloadURL = await getDownloadURL(storageRef);
-      
-      // Save metadata to Firestore
-      await addDoc(collection(db, 'signs'), {
+
+      // Prepare metadata for storage
+      const metadata = {
         userId: user.uid,
-        userName: user.displayName || 'Anonymous',
+        userName: user.displayName || "Anonymous",
         signLanguage,
         word: word.toLowerCase(),
-        videoUrl: downloadURL,
+        filename,
+        timestamp,
+        mimeType: "video/webm",
+      };
+
+      // Check video blob size before uploading
+      if (!videoBlob || videoBlob.size === 0) {
+        throw new Error("Video recording appears to be empty. Please try recording again.");
+      }
+
+      console.log("Starting video upload process with blob size:", videoBlob.size);
+      
+      // Upload to Firebase Storage (now used for both temporary and permanent storage)
+      const glacierResult = await uploadVideoToGlacier(videoBlob, metadata);
+      console.log("Video archived to Firebase Storage:", glacierResult);
+
+      // Save metadata to Firestore including the storage path as archiveId
+      await addDoc(collection(db, "signs"), {
+        userId: user.uid,
+        userName: user.displayName || "Anonymous",
+        signLanguage,
+        word: word.toLowerCase(),
+        videoUrl: glacierResult.location, // Use the URL from the storage upload
+        glacierArchiveId: glacierResult.archiveId, // This is now the Firebase Storage path
         createdAt: serverTimestamp(),
-        approved: false // Admin needs to approve before it's publicly available
+        approved: false, // Admin needs to approve before it's publicly available
       });
-      
-      setSuccess('Video uploaded successfully! It will be reviewed before being added to the database.');
-      
+
+      setSuccess(
+        "Video uploaded successfully! It will be reviewed before being added to the database."
+      );
+
       // Reset form
-      setWord('');
+      setWord("");
       setVideoBlob(null);
-      
     } catch (error) {
-      console.error('Error uploading video:', error);
-      setError('Error uploading video. Please try again.');
+      console.error("Error uploading video:", error);
+      
+      // Provide more specific error messages based on the error
+      let errorMessage = "Error uploading video. ";
+      
+      if (error.message.includes("timed out")) {
+        errorMessage += "The upload timed out. Please check your internet connection and try again.";
+      } else if (error.message.includes("quota")) {
+        errorMessage += "Storage quota exceeded. Please try again later or contact support.";
+      } else if (error.message.includes("permission") || error.message.includes("unauthorized")) {
+        errorMessage += "You don't have permission to upload. Please log out and log in again.";
+      } else if (error.message.includes("network") || error.message.includes("connection")) {
+        errorMessage += "Network error. Please check your internet connection and try again.";
+      } else if (error.message.includes("empty")) {
+        errorMessage += "The recorded video appears to be empty. Please try recording again.";
+      } else {
+        errorMessage += error.message || "Please try again.";
+      }
+      
+      setError(errorMessage);
     } finally {
       setIsUploading(false);
     }
@@ -191,12 +230,12 @@ const Upload = () => {
   return (
     <UploadContainer>
       <Title>Upload Sign Video</Title>
-      
+
       <Form onSubmit={handleSubmit}>
         <FormGroup>
           <Label>Sign Language</Label>
-          <Select 
-            value={signLanguage} 
+          <Select
+            value={signLanguage}
             onChange={(e) => setSignLanguage(e.target.value)}
             required
           >
@@ -208,40 +247,46 @@ const Upload = () => {
             <option value="auslan">Australian Sign Language (Auslan)</option>
           </Select>
         </FormGroup>
-        
+
         <FormGroup>
           <Label>Word</Label>
-          <Input 
-            type="text" 
-            value={word} 
+          <Input
+            type="text"
+            value={word}
             onChange={(e) => setWord(e.target.value)}
             placeholder="Enter the word for this sign"
             required
           />
         </FormGroup>
-        
+
         <FormGroup>
           <Label>Record Video (1-3 seconds)</Label>
           <VideoRecorder onVideoRecorded={handleVideoRecorded} />
         </FormGroup>
-        
+
         {error && <ErrorMessage>{error}</ErrorMessage>}
         {success && <SuccessMessage>{success}</SuccessMessage>}
-        
+
         <Button type="submit" disabled={isUploading}>
-          {isUploading ? 'Uploading...' : 'Upload Sign'}
+          {isUploading ? "Uploading..." : "Upload Sign"}
         </Button>
       </Form>
-      
+
       <Guidelines>
         <GuidelinesTitle>Recording Guidelines</GuidelinesTitle>
         <ul>
           <li>Record in a well-lit environment with a plain background</li>
           <li>Position yourself so your signing hand is clearly visible</li>
           <li>The video should be 1-3 seconds long</li>
-          <li>Include the full sign motion with minimal empty space at the beginning and end</li>
+          <li>
+            Include the full sign motion with minimal empty space at the
+            beginning and end
+          </li>
           <li>Ensure the sign is completed within the recording</li>
-          <li>Avoid wearing clothing with busy patterns or colors similar to your skin tone</li>
+          <li>
+            Avoid wearing clothing with busy patterns or colors similar to your
+            skin tone
+          </li>
         </ul>
       </Guidelines>
     </UploadContainer>

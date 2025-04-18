@@ -11,11 +11,15 @@ const RecorderContainer = styled.div`
 
 const VideoPreview = styled.div`
   width: 100%;
-  max-width: 500px;
+  max-width: 350px;
+  height: 500px;
   border: 2px solid var(--accent-green);
   border-radius: 8px;
   overflow: hidden;
   margin-bottom: 20px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
 `;
 
 const ButtonContainer = styled.div`
@@ -171,6 +175,16 @@ const VideoRecorder = ({ onVideoRecorded }) => {
       
       mediaRecorderRef.current.onstop = () => {
         const blob = new Blob(chunks, { type: 'video/webm' });
+        
+        // Add validation and logging for the blob
+        if (!blob || blob.size === 0) {
+          console.error('Error: Created blob is empty or invalid');
+          setError('Recording failed to produce valid video data. Please try again.');
+          return;
+        }
+        
+        console.log('Video recorded successfully. Blob size:', blob.size, 'bytes');
+        
         const url = URL.createObjectURL(blob);
         setRecordedVideo({ url, blob });
         if (onVideoRecorded) {
@@ -250,19 +264,20 @@ const VideoRecorder = ({ onVideoRecorded }) => {
             controls 
             autoPlay 
             loop 
-            style={{ width: '100%', height: 'auto' }} 
+            style={{ width: 'auto', height: '100%', maxHeight: '500px' }} 
           />
         ) : (
           <Webcam
             audio={false}
             ref={webcamRef}
             screenshotFormat="image/jpeg"
-            width="100%"
-            height="auto"
+            width="auto"
+            height="100%"
             videoConstraints={{
               facingMode: "user",
-              width: 1280,
-              height: 720
+              width: 720,
+              height: 1280,
+              aspectRatio: 9/16
             }}
             onUserMedia={() => {
               setHasUserMedia(true);
