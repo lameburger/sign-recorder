@@ -1,8 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import styled from 'styled-components';
-import { collection, query, where, getDocs, deleteDoc, doc } from 'firebase/firestore';
-import { ref, deleteObject } from 'firebase/storage';
-import { db, storage, auth } from '../services/firebase';
+import React, { useState, useEffect } from "react";
+import styled from "styled-components";
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  deleteDoc,
+  doc,
+} from "firebase/firestore";
+import { ref, deleteObject } from "firebase/storage";
+import { db, storage, auth } from "../services/firebase";
+import ContributionTracker from "../components/contributiontracker";
 
 const ProfileContainer = styled.div`
   max-width: 1000px;
@@ -76,8 +84,10 @@ const VideoStatus = styled.div`
   border-radius: 4px;
   font-size: 0.8rem;
   display: inline-block;
-  background-color: ${props => props.approved ? 'rgba(0, 255, 0, 0.2)' : 'rgba(255, 204, 0, 0.2)'};
-  color: ${props => props.approved ? 'var(--accent-green)' : 'var(--accent-yellow)'};
+  background-color: ${(props) =>
+    props.approved ? "rgba(0, 255, 0, 0.2)" : "rgba(255, 204, 0, 0.2)"};
+  color: ${(props) =>
+    props.approved ? "var(--accent-green)" : "var(--accent-yellow)"};
 `;
 
 const DeleteButton = styled.button`
@@ -88,7 +98,7 @@ const DeleteButton = styled.button`
   border-radius: 4px;
   cursor: pointer;
   margin-top: 10px;
-  
+
   &:hover {
     background-color: #ff3333;
   }
@@ -107,80 +117,91 @@ const Profile = () => {
   const [stats, setStats] = useState({
     totalVideos: 0,
     approvedVideos: 0,
-    languages: 0
+    languages: 0,
   });
 
   useEffect(() => {
     const fetchUserVideos = async () => {
       try {
         const user = auth.currentUser;
-        
+
         if (!user) {
           setLoading(false);
           return;
         }
-        
-        const q = query(collection(db, 'signs'), where('userId', '==', user.uid));
+
+        const q = query(
+          collection(db, "signs"),
+          where("userId", "==", user.uid)
+        );
         const querySnapshot = await getDocs(q);
-        
+
         const videosData = [];
         querySnapshot.forEach((doc) => {
           videosData.push({
             id: doc.id,
-            ...doc.data()
+            ...doc.data(),
           });
         });
-        
+
         setVideos(videosData);
-        
+
         // Calculate stats
-        const approvedCount = videosData.filter(video => video.approved).length;
-        const uniqueLanguages = new Set(videosData.map(video => video.signLanguage)).size;
-        
+        const approvedCount = videosData.filter(
+          (video) => video.approved
+        ).length;
+        const uniqueLanguages = new Set(
+          videosData.map((video) => video.signLanguage)
+        ).size;
+
         setStats({
           totalVideos: videosData.length,
           approvedVideos: approvedCount,
-          languages: uniqueLanguages
+          languages: uniqueLanguages,
         });
-        
       } catch (error) {
-        console.error('Error fetching videos:', error);
+        console.error("Error fetching videos:", error);
       } finally {
         setLoading(false);
       }
     };
-    
+
     fetchUserVideos();
   }, []);
 
   const handleDeleteVideo = async (videoId, videoUrl) => {
-    if (window.confirm('Are you sure you want to delete this video? This action cannot be undone.')) {
+    if (
+      window.confirm(
+        "Are you sure you want to delete this video? This action cannot be undone."
+      )
+    ) {
       try {
         // Delete from Firestore
-        await deleteDoc(doc(db, 'signs', videoId));
-        
+        await deleteDoc(doc(db, "signs", videoId));
+
         // Delete from Storage
         // Extract the path from the URL
         const storageRef = ref(storage, videoUrl);
         await deleteObject(storageRef);
-        
+
         // Update state
-        setVideos(videos.filter(video => video.id !== videoId));
-        
+        setVideos(videos.filter((video) => video.id !== videoId));
+
         // Update stats
-        const deletedVideo = videos.find(video => video.id === videoId);
+        const deletedVideo = videos.find((video) => video.id === videoId);
         const wasApproved = deletedVideo?.approved || false;
-        
-        setStats(prevStats => ({
+
+        setStats((prevStats) => ({
           totalVideos: prevStats.totalVideos - 1,
-          approvedVideos: wasApproved ? prevStats.approvedVideos - 1 : prevStats.approvedVideos,
+          approvedVideos: wasApproved
+            ? prevStats.approvedVideos - 1
+            : prevStats.approvedVideos,
           // We don't update languages count as it would require recalculating
-          languages: prevStats.languages
+          languages: prevStats.languages,
         }));
-        
       } catch (error) {
-        console.error('Error deleting video:', error);
-        alert('Failed to delete video. Please try again.');
+        console.error("Error deleting video:", error);
+        alert("Failed to delete video. Please try again.");
       }
     }
   };
@@ -192,49 +213,55 @@ const Profile = () => {
   return (
     <ProfileContainer>
       <Title>My Profile</Title>
-      
+
       <StatsContainer>
         <StatCard>
           <StatNumber>{stats.totalVideos}</StatNumber>
           <StatLabel>Total Videos</StatLabel>
         </StatCard>
-        
+
         <StatCard>
           <StatNumber>{stats.approvedVideos}</StatNumber>
           <StatLabel>Approved Videos</StatLabel>
         </StatCard>
-        
+
         <StatCard>
           <StatNumber>{stats.languages}</StatNumber>
           <StatLabel>Sign Languages</StatLabel>
         </StatCard>
       </StatsContainer>
-      
+
+      {/* Contribution Tracker */}
+      {videos.length > 0 && <ContributionTracker videos={videos} />}
+
       <h3>My Videos</h3>
-      
+
       {videos.length === 0 ? (
         <EmptyState>
           <p>You haven't uploaded any videos yet.</p>
         </EmptyState>
       ) : (
         <VideosGrid>
-          {videos.map(video => (
+          {videos.map((video) => (
             <VideoCard key={video.id}>
-              <video 
-                src={video.videoUrl} 
-                controls 
-                style={{ width: '100%', height: 'auto' }} 
+              <video
+                src={video.videoUrl}
+                controls
+                style={{ width: "100%", height: "auto" }}
               />
               <VideoInfo>
                 <VideoTitle>{video.word}</VideoTitle>
                 <VideoMeta>
-                  {video.signLanguage.toUpperCase()} • {new Date(video.createdAt?.toDate()).toLocaleDateString()}
+                  {video.signLanguage.toUpperCase()} •{" "}
+                  {new Date(video.createdAt?.toDate()).toLocaleDateString()}
                 </VideoMeta>
                 <VideoStatus approved={video.approved}>
-                  {video.approved ? 'Approved' : 'Pending Review'}
+                  {video.approved ? "Approved" : "Pending Review"}
                 </VideoStatus>
                 <div>
-                  <DeleteButton onClick={() => handleDeleteVideo(video.id, video.videoUrl)}>
+                  <DeleteButton
+                    onClick={() => handleDeleteVideo(video.id, video.videoUrl)}
+                  >
                     Delete
                   </DeleteButton>
                 </div>
